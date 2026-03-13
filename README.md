@@ -12,6 +12,10 @@ Supports local machine and VPS/server (HTTPS + reverse proxy) setups.
 
 ### Windows Development Setup
 
+For detailed Windows setup instructions, see [WINDOWS-SETUP.md](WINDOWS-SETUP.md).
+
+Quick start:
+
 ```powershell
 # Start all services (Supabase, Sandbox, API, Frontend)
 .\start-kortix.ps1
@@ -27,6 +31,8 @@ The start script will automatically:
 - Configure the sandbox in the database
 - Start the API and Frontend servers
 - Open the dashboard in your browser
+
+**Prerequisites**: Docker Desktop, Node.js, Bun, Supabase CLI
 
 ## Layout
 

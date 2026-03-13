@@ -8,18 +8,18 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "🚀 Starting Kortix Platform..." -ForegroundColor Cyan
+Write-Host "Starting Kortix Platform..." -ForegroundColor Cyan
 
 # Check if Docker is running
 try {
     docker ps | Out-Null
 } catch {
-    Write-Host "❌ Docker is not running. Please start Docker Desktop first." -ForegroundColor Red
+    Write-Host "ERROR: Docker is not running. Please start Docker Desktop first." -ForegroundColor Red
     exit 1
 }
 
 # Start Supabase stack
-Write-Host "`n📦 Starting Supabase stack..." -ForegroundColor Yellow
+Write-Host "`nStarting Supabase stack..." -ForegroundColor Yellow
 Push-Location infra/supabase
 try {
     supabase start
@@ -31,7 +31,7 @@ try {
 }
 
 # Start Sandbox
-Write-Host "`n🖥️  Starting Kortix Sandbox..." -ForegroundColor Yellow
+Write-Host "`nStarting Kortix Sandbox..." -ForegroundColor Yellow
 $sandboxRunning = docker ps --filter "name=kortix-sandbox" --format "{{.Names}}" | Select-String "kortix-sandbox"
 if (-not $sandboxRunning) {
     docker start kortix-sandbox 2>$null
@@ -51,7 +51,7 @@ if (-not $sandboxRunning) {
             -p 14008:3211 `
             -v kortix-workspace:/workspace `
             -e INTERNAL_SERVICE_KEY=33267421f64dad95db7ad5a76a4e7088f76f1324f6339116f6aaed4b053c020b `
-            kortix/sandbox:latest
+            kortix/computer:latest
     }
 }
 
@@ -69,18 +69,49 @@ while ($attempt -lt $maxAttempts) {
 }
 
 if ($attempt -eq $maxAttempts) {
-    Write-Host "⚠️  Sandbox health check timeout, but continuing..." -ForegroundColor Yellow
+    Write-Host "WARNING: Sandbox health check timeout, but continuing..." -ForegroundColor Yellow
 }
 
 # Apply database migrations
-Write-Host "`n📊 Applying database migrations..." -ForegroundColor Yellow
+Write-Host "`nApplying database migrations..." -ForegroundColor Yellow
 Get-ChildItem "infra/supabase/migrations/*.sql" | Sort-Object Name | ForEach-Object {
     Write-Host "  Applying: $($_.Name)" -ForegroundColor Gray
     Get-Content $_.FullName | docker exec -i supabase_db_kortix-local psql -U postgres -d postgres -q
 }
 
+# Ensure INTEGRATION_AUTH_PROVIDER is set to 'none' for local dev
+Write-Host "`nConfiguring environment..." -ForegroundColor Yellow
+if (Test-Path ".env") {
+    $envContent = Get-Content ".env" -Raw
+    $modified = $false
+    
+    if ($envContent -match 'INTEGRATION_AUTH_PROVIDER=pipedream') {
+        $envContent = $envContent -replace 'INTEGRATION_AUTH_PROVIDER=pipedream', 'INTEGRATION_AUTH_PROVIDER=none'
+        $modified = $true
+        Write-Host "  Set INTEGRATION_AUTH_PROVIDER=none" -ForegroundColor Gray
+    }
+    
+    if ($modified) {
+        Set-Content ".env" -Value $envContent -NoNewline
+    }
+}
+
+# Ensure frontend has billing disabled
+if (Test-Path "apps/frontend/.env") {
+    $frontendEnv = Get-Content "apps/frontend/.env" -Raw
+    if ($frontendEnv -notmatch 'NEXT_PUBLIC_BILLING_ENABLED=false') {
+        if ($frontendEnv -match 'NEXT_PUBLIC_BILLING_ENABLED=') {
+            $frontendEnv = $frontendEnv -replace 'NEXT_PUBLIC_BILLING_ENABLED=.*', 'NEXT_PUBLIC_BILLING_ENABLED=false'
+        } else {
+            $frontendEnv += "`nNEXT_PUBLIC_BILLING_ENABLED=false`n"
+        }
+        Set-Content "apps/frontend/.env" -Value $frontendEnv -NoNewline
+        Write-Host "  Set NEXT_PUBLIC_BILLING_ENABLED=false" -ForegroundColor Gray
+    }
+}
+
 # Update sandbox record in database
-Write-Host "`n🔧 Configuring sandbox in database..." -ForegroundColor Yellow
+Write-Host "`nConfiguring sandbox in database..." -ForegroundColor Yellow
 $updateSandboxQuery = @"
 UPDATE kortix.sandboxes 
 SET status = 'active', 
@@ -105,17 +136,26 @@ WHERE setup_complete_at IS NULL;
 docker exec supabase_db_kortix-local psql -U postgres -d postgres -c $updateSandboxQuery -q
 
 # Fix secrets file in sandbox
-Write-Host "`n🔐 Initializing secrets store..." -ForegroundColor Yellow
+Write-Host "`nInitializing secrets store..." -ForegroundColor Yellow
 $secretsJson = '{"secrets":{},"version":1}'
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($secretsJson)
 $base64 = [Convert]::ToBase64String($bytes)
-docker exec kortix-sandbox sh -c "echo $base64 | base64 -d > /workspace/.secrets/.secrets.json && chmod 600 /workspace/.secrets/.secrets.json"
+docker exec kortix-sandbox sh -c "echo $base64 | base64 -d > /workspace/.secrets/.secrets.json; chmod 600 /workspace/.secrets/.secrets.json"
+
+# Fix agent-browser-viewer path
+Write-Host "`nConfiguring Agent Browser..." -ForegroundColor Yellow
+docker exec kortix-sandbox sh -c 'ln -sf /opt/build/browser-viewer /opt/agent-browser-viewer'
+docker exec kortix-sandbox sh -c 's6-svc -u /run/service/svc-agent-browser-viewer'
+
+# Start OpenCode service
+Write-Host "`nStarting OpenCode service..." -ForegroundColor Yellow
+docker exec kortix-sandbox sh -c 's6-svc -u /run/service/svc-opencode-serve'
 
 # Set ONBOARDING_COMPLETE in s6 env
 docker exec kortix-sandbox sh -c 'echo "true" > /var/run/s6/container_environment/ONBOARDING_COMPLETE'
 
 # Kill any processes on ports 8008 and 3000
-Write-Host "`n🧹 Cleaning up ports..." -ForegroundColor Yellow
+Write-Host "`nCleaning up ports..." -ForegroundColor Yellow
 $ports = @(8008, 3000)
 foreach ($port in $ports) {
     $processIds = (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique
@@ -129,35 +169,35 @@ foreach ($port in $ports) {
 Start-Sleep -Seconds 1
 
 # Start API
-Write-Host "`n🔌 Starting Kortix API..." -ForegroundColor Yellow
+Write-Host "`nStarting Kortix API..." -ForegroundColor Yellow
 Push-Location kortix-api
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "bun run src/index.ts" -WindowStyle Minimized
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "bun run src/index.ts" -WindowStyle Minimized
 Pop-Location
 
 Start-Sleep -Seconds 3
 
 # Start Frontend
-Write-Host "`n🌐 Starting Frontend..." -ForegroundColor Yellow
+Write-Host "`nStarting Frontend..." -ForegroundColor Yellow
 Push-Location apps/frontend
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "npm run dev" -WindowStyle Minimized
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev" -WindowStyle Minimized
 Pop-Location
 
-Write-Host "`n✅ Kortix Platform is starting!" -ForegroundColor Green
+Write-Host "`nKortix Platform is starting!" -ForegroundColor Green
 Write-Host "`nServices:" -ForegroundColor Cyan
-Write-Host "  • Supabase Studio:  http://localhost:64323" -ForegroundColor White
-Write-Host "  • Supabase API:     http://localhost:64321" -ForegroundColor White
-Write-Host "  • Database:         postgresql://postgres:postgres@127.0.0.1:64322/postgres" -ForegroundColor White
-Write-Host "  • Kortix API:       http://localhost:8008" -ForegroundColor White
-Write-Host "  • Frontend:         http://localhost:3000" -ForegroundColor White
-Write-Host "  • Sandbox Desktop:  http://localhost:14002" -ForegroundColor White
+Write-Host "  - Supabase Studio:  http://localhost:64323" -ForegroundColor White
+Write-Host "  - Supabase API:     http://localhost:64321" -ForegroundColor White
+Write-Host "  - Database:         postgresql://postgres:postgres@127.0.0.1:64322/postgres" -ForegroundColor White
+Write-Host "  - Kortix API:       http://localhost:8008" -ForegroundColor White
+Write-Host "  - Frontend:         http://localhost:3000" -ForegroundColor White
+Write-Host "  - Sandbox Desktop:  http://localhost:14002" -ForegroundColor White
 
-Write-Host "`n⏳ Waiting for services to be ready..." -ForegroundColor Gray
+Write-Host "`nWaiting for services to be ready..." -ForegroundColor Gray
 Start-Sleep -Seconds 8
 
-Write-Host "`n🎉 Opening dashboard..." -ForegroundColor Green
+Write-Host "`nOpening dashboard..." -ForegroundColor Green
 Start-Process "http://localhost:3000/onboarding?skip_onboarding"
 
-Write-Host "`nℹ️  To stop services:" -ForegroundColor Gray
-Write-Host "  • API & Frontend: Close the PowerShell windows" -ForegroundColor Gray
-Write-Host "  • Supabase: cd infra/supabase && supabase stop" -ForegroundColor Gray
-Write-Host "  • Sandbox: docker stop kortix-sandbox" -ForegroundColor Gray
+Write-Host "`nTo stop services:" -ForegroundColor Gray
+Write-Host "  - API and Frontend: Close the PowerShell windows" -ForegroundColor Gray
+Write-Host "  - Supabase: cd infra/supabase; supabase stop" -ForegroundColor Gray
+Write-Host "  - Sandbox: docker stop kortix-sandbox" -ForegroundColor Gray
