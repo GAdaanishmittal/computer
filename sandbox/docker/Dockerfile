@@ -87,7 +87,8 @@ ENV KORTIX_WORKSPACE=/workspace
 
 # ── Services (s6-rc.d longrun) ──────────────────────────────────────────────
 COPY sandbox/s6-services/ /etc/s6-overlay/s6-rc.d/
-RUN for svc in svc-kortix-master svc-sshd; do \
+RUN find /etc/s6-overlay/s6-rc.d -type f -exec sed -i 's/\r$//' {} + \
+    && for svc in svc-kortix-master svc-sshd; do \
         touch "/etc/s6-overlay/s6-rc.d/user/contents.d/${svc}"; \
     done \
     && chmod +x /etc/s6-overlay/s6-rc.d/svc-*/run
@@ -103,7 +104,7 @@ COPY sandbox/config/96-fix-bun-pty.sh /custom-cont-init.d/96-fix-bun-pty
 COPY sandbox/config/97-secrets-to-s6-env.sh /custom-cont-init.d/97-secrets-to-s6-env
 COPY sandbox/config/kortix-env-setup.sh /custom-cont-init.d/98-kortix-env
 COPY sandbox/config/customize.sh /custom-cont-init.d/99-customize
-RUN chmod +x /custom-cont-init.d/*
+RUN sed -i 's/\r$//' /custom-cont-init.d/* && chmod +x /custom-cont-init.d/*
 
 # ── Copy source packages directly (no bundle-runtime.cjs needed) ─────────────
 COPY sandbox/kortix-master  /opt/build/kortix-master
@@ -116,6 +117,9 @@ COPY packages/kortix-oc              /opt/build/kortix-oc
 COPY packages/opencode-channels      /opt/build/opencode-channels
 COPY packages/opencode-agent-triggers /opt/build/opencode-agent-triggers
 
+# Pre-install sandbox root dependencies so opencode and agent-browser bins are available
+RUN cd /opt/build && npm install --omit=dev
+
 # ── Build sandbox runtime (flat /opt layout, no symlinks) ────────────────────
 RUN set -e && echo "[docker] Building sandbox runtime v${SANDBOX_VERSION}..." && \
     \
@@ -123,22 +127,22 @@ RUN set -e && echo "[docker] Building sandbox runtime v${SANDBOX_VERSION}..." &&
     cd /opt/build/kortix-master && \
     sed -i 's|"@kortix/opencode-agent-triggers": "[^"]*"|"@kortix/opencode-agent-triggers": "file:../opencode-agent-triggers"|' package.json && \
     \
-    # ── 2. kortix-master ── \
+    # ── 2. opencode-agent-triggers ── \
+    mkdir -p /opt/opencode-agent-triggers && \
+    rsync -a --exclude=node_modules --exclude=bun.lock --exclude=bun.lockb --exclude=.git \
+      /opt/build/opencode-agent-triggers/ /opt/opencode-agent-triggers/ && \
+    \
+    # ── 3. kortix-master ── \
     mkdir -p /opt/kortix-master && \
-    rsync -a --exclude=node_modules --exclude=bun.lock \
+    rsync -a --exclude=node_modules --exclude=bun.lock --exclude=bun.lockb \
       /opt/build/kortix-master/ /opt/kortix-master/ && \
     cd /opt/kortix-master && bun install && \
     \
-    # ── 3. opencode-channels ── \
+    # ── 4. opencode-channels ── \
     mkdir -p /opt/opencode-channels && \
-    rsync -a --exclude=node_modules --exclude=bun.lock --exclude=.git \
+    rsync -a --exclude=node_modules --exclude=bun.lock --exclude=bun.lockb --exclude=.git \
       /opt/build/opencode-channels/ /opt/opencode-channels/ && \
     cd /opt/opencode-channels && bun install && \
-    \
-    # ── 4. opencode-agent-triggers ── \
-    mkdir -p /opt/opencode-agent-triggers && \
-    rsync -a --exclude=node_modules --exclude=bun.lock --exclude=.git \
-      /opt/build/opencode-agent-triggers/ /opt/opencode-agent-triggers/ && \
     \
     # ── 5. kortix-oc + materialize opencode runtime ── \
     mkdir -p /opt/kortix-oc /opt/opencode && \
@@ -184,11 +188,21 @@ RUN set -e && echo "[docker] Building sandbox runtime v${SANDBOX_VERSION}..." &&
     rsync -a --delete /opt/build/core/ /opt/kortix/core/ && \
     \
     # ── 10. Global binary symlinks ── \
-    cd /opt/build && npm install --no-audit --no-fund . && \
-    for bin in opencode agent-browser; do \
-      SRC="/opt/build/node_modules/.bin/$bin"; \
-      [ -f "$SRC" ] && ln -sf "$SRC" "/usr/local/bin/$bin"; \
-    done && \
+    # npm installs platform-specific binaries in node_modules/opencode-linux-x64-musl/bin/opencode
+    # The .bin shim is a Node.js script that doesn't work directly as /usr/local/bin/opencode
+    # So we find and symlink the actual native binary instead.
+    OPENCODE_BIN=$(find /opt/build/node_modules -path "*/opencode-linux-x64-musl/bin/opencode" -type f 2>/dev/null | head -1) && \
+    if [ -n "$OPENCODE_BIN" ]; then \
+      ln -sf "$OPENCODE_BIN" /usr/local/bin/opencode; \
+      echo "[docker] Linked opencode -> $OPENCODE_BIN"; \
+    else \
+      echo "[docker] WARNING: opencode native binary not found!"; \
+    fi && \
+    AGENT_BIN=$(find /opt/build/node_modules -path "*/agent-browser/bin/agent-browser" -type f 2>/dev/null | head -1) && \
+    if [ -n "$AGENT_BIN" ]; then \
+      ln -sf "$AGENT_BIN" /usr/local/bin/agent-browser; \
+      echo "[docker] Linked agent-browser -> $AGENT_BIN"; \
+    fi && \
     \
     # ── 11. Remove stale opencode-ai bun cache ── \
     rm -f /opt/build/node_modules/opencode-ai/bin/.opencode 2>/dev/null || true && \
@@ -204,7 +218,7 @@ RUN set -e && echo "[docker] Building sandbox runtime v${SANDBOX_VERSION}..." &&
 
 # ── Startup entrypoint ────────────────────────────────────────────────────────
 COPY sandbox/startup.sh /opt/startup.sh
-RUN chmod +x /opt/startup.sh
+RUN sed -i 's/\r$//' /opt/startup.sh && chmod +x /opt/startup.sh
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser

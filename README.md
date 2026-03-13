@@ -10,6 +10,24 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kortix-ai/computer/main/scri
 
 Supports local machine and VPS/server (HTTPS + reverse proxy) setups.
 
+### Windows Development Setup
+
+```powershell
+# Start all services (Supabase, Sandbox, API, Frontend)
+.\start-kortix.ps1
+
+# Stop all services
+.\stop-kortix.ps1
+```
+
+The start script will automatically:
+- Start Supabase stack
+- Start or create the Kortix sandbox container
+- Apply database migrations
+- Configure the sandbox in the database
+- Start the API and Frontend servers
+- Open the dashboard in your browser
+
 ## Layout
 
 - `apps/frontend/` — Next.js dashboard

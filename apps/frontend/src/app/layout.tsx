@@ -234,7 +234,7 @@ export default function RootLayout({
         />
       </head>
 
-      <body className="antialiased font-sans bg-background">
+      <body className="antialiased font-sans bg-background" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

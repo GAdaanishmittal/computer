@@ -46,7 +46,7 @@ export async function ensureSchema(): Promise<void> {
   // where PATH may not include ~/.bun/bin
   const bunBin = process.execPath;
   const proc = Bun.spawn(
-    [bunBin, 'drizzle-kit', 'push', '--force', '--config', configPath],
+    [bunBin, 'run', join(dbPkgRoot, 'node_modules', 'drizzle-kit', 'bin.cjs'), 'push', '--force', '--config', configPath],
     {
       cwd: dbPkgRoot,
       env: {
